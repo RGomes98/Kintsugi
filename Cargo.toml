@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/io", "crates/ai", "crates/dsp", "crates/cli"]
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+symphonia = "0.5.5"
+hound = "3.5.1"
