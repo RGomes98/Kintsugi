@@ -1,0 +1,20 @@
+{
+  "model_name": "htdemucs",
+  "file": "htdemucs_cuda.pt",
+  "sources": [
+    "drums",
+    "bass",
+    "other",
+    "vocals"
+  ],
+  "samplerate": 44100,
+  "segment": 7.8,
+  "segment_samples": 343980,
+  "is_bag": true,
+  "num_models": 1,
+  "torch_version": "2.1.0+cu121",
+  "demucs_version": "4.0.1",
+  "python_version": "3.11.0",
+  "traced_device": "cuda",
+  "dtype": "float32"
+}
