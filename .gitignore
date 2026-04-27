@@ -1,4 +1,3 @@
 /target
-/models
-*flac
-*wav
+/output/*
+!/output/.gitkeep

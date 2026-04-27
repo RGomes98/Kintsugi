@@ -11,11 +11,7 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-pub struct AudioBuffer {
-    pub samples: Vec<f32>,
-    pub sample_rate: u32,
-    pub channels: u16,
-}
+use core::AudioBuffer;
 
 pub fn run_pipeline() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -40,7 +36,7 @@ pub fn run_pipeline() -> Result<()> {
     Ok(())
 }
 
-fn decode_audio(path: &Path) -> Result<AudioBuffer> {
+pub fn decode_audio(path: &Path) -> Result<AudioBuffer> {
     let mut hint: Hint = Hint::new();
 
     if let Some(ext) = path.extension().and_then(|e: &std::ffi::OsStr| e.to_str()) {
@@ -114,7 +110,9 @@ fn decode_audio(path: &Path) -> Result<AudioBuffer> {
     })
 }
 
-fn write_wav(path: &Path, buffer: &AudioBuffer) -> Result<()> {
+pub fn write_wav(path: &Path, buffer: &AudioBuffer) -> Result<()> {
+    ensure_dir_exists(path)?;
+
     let spec: hound::WavSpec = hound::WavSpec {
         channels: buffer.channels,
         sample_rate: buffer.sample_rate,
@@ -132,5 +130,17 @@ fn write_wav(path: &Path, buffer: &AudioBuffer) -> Result<()> {
     }
 
     writer.finalize().context("Failed to finalize WAV file")?;
+    Ok(())
+}
+
+pub fn ensure_dir_exists(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create directory structure for {}",
+                parent.display()
+            )
+        })?;
+    }
     Ok(())
 }

@@ -1,14 +1,14 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+#[derive(Clone, Debug)]
+pub struct AudioBuffer {
+    pub samples: Vec<f32>,
+    pub sample_rate: u32,
+    pub channels: u16,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[derive(Clone, Debug)]
+pub struct Stems {
+    pub drums: AudioBuffer,
+    pub bass: AudioBuffer,
+    pub other: AudioBuffer,
+    pub vocals: AudioBuffer,
 }

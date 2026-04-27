@@ -1,0 +1,8 @@
+{
+  "rust-analyzer.cargo.extraEnv": {
+    "LIBTORCH_USE_PYTORCH": "1"
+  },
+  "rust-analyzer.runnables.extraEnv": {
+    "LIBTORCH_USE_PYTORCH": "1"
+  }
+}

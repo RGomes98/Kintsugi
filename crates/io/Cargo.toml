@@ -8,3 +8,5 @@ license.workspace = true
 anyhow.workspace = true
 symphonia.workspace = true
 hound.workspace = true
+
+core = { path = "../core" }

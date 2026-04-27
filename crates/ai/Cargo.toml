@@ -5,3 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+tch.workspace = true
+anyhow.workspace = true
+
+core = { path = "../core" }
