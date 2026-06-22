@@ -13,29 +13,66 @@ While the full remastering engine is under development, the current version prov
   - **Stereo Widening:** Enhancing the spatial image of vintage mono or narrow-field recordings.
   - **Harmonic Restoration:** Synthesizing missing frequencies lost to low-bitrate compression or aging tape.
 
-## Usage
+## Quick Start (Docker)
 
-Before running the CLI, ensure you have set the environment variable to link your PyTorch installation:
-
-```bash
-set LIBTORCH_USE_PYTORCH=1
-```
-
-### Running the CLI
-
-The command accepts various audio formats (FLAC, MP3, WAV, etc.) and the target device (`cuda` or `cpu`).
-
-**Using GPU (CUDA):**
+### 1. Build the image for your hardware
 
 ```bash
-cargo run --release --bin cli "PATH/TO/YOUR_AUDIO_FILE.MP3" cuda
+./docker_build.sh --cpu   # CPU image
+./docker_build.sh --cuda  # CUDA image (requires NVIDIA GPU)
+./docker_build.sh         # both
 ```
 
-**Using CPU:**
+### 2. Separate a track
 
 ```bash
-cargo run --release --bin cli "PATH/TO/YOUR_AUDIO_FILE.FLAC" cpu
+./kintsugi.sh --cpu song.mp3
+./kintsugi.sh --cuda song.mp3
+./kintsugi.sh --cuda song.mp3 --output ~/stems
 ```
+
+Output files appear in `./output/` (or the directory passed with `--output`):
+
+| File                    | Content         |
+| :---------------------- | :-------------- |
+| `drums.wav`             | Drum stem       |
+| `bass.wav`              | Bass stem       |
+| `vocals.wav`            | Vocal stem      |
+| `other_instruments.wav` | Everything else |
+
+## Development
+
+### 1. Export the model
+
+Follow the setup in [`python/README.md`](python/README.md), then run:
+
+```bash
+cd python
+source .venv/bin/activate
+python scripts/export_model.py --device cpu   # or --device cuda
+```
+
+This writes the TorchScript model to `python/models/`.
+
+### 2. Build and run the CLI
+
+`tch-rs` (the Rust PyTorch bindings) needs to locate LibTorch at build time. Point it at the venv you just created:
+
+```bash
+export LIBTORCH_USE_PYTORCH=1
+export LD_LIBRARY_PATH="$(pwd)/python/.venv/lib/python3.11/site-packages/torch/lib:$LD_LIBRARY_PATH"
+
+cargo build --release
+```
+
+Run it from the project root (the CLI resolves model paths relative to the working directory):
+
+```bash
+./target/release/cli path/to/song.mp3 cpu
+./target/release/cli path/to/song.mp3 cuda
+```
+
+Output stems are written to `./output/`.
 
 ## License
 

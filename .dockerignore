@@ -1,0 +1,5 @@
+.git/
+target/
+output/
+kintsugi.sh
+docker_build.sh

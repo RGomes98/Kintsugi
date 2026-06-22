@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import warnings
+import argparse
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,7 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         os.fsync(tmp.fileno())
         temp_name = tmp.name
     os.replace(temp_name, path)
+    os.chmod(path, 0o644)
 
 def atomic_save_torchscript(path: Path, traced: torch.jit.ScriptModule) -> None:
     with tempfile.NamedTemporaryFile(delete=False, dir=path.parent, suffix=".tmp") as tmp:
@@ -60,6 +62,7 @@ def atomic_save_torchscript(path: Path, traced: torch.jit.ScriptModule) -> None:
     try:
         traced.save(str(temp_path))
         os.replace(temp_path, path)
+        os.chmod(path, 0o644)
     finally:
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
@@ -166,8 +169,17 @@ def build_manifest(
     )
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Export Demucs to TorchScript.")
+
+    parser.add_argument(
+        "--device", 
+        default="all",
+        choices=["all", "cpu", "cuda"],
+        help="Target device to export for (default: all available)"
+    )
+
+    args = parser.parse_args()
     out_dir = models_dir()
-    
     model, is_bag, num_models = load_single_htdemucs()
     sources, samplerate, segment, segment_samples = validate_model(model)
 
@@ -175,10 +187,23 @@ def main() -> int:
     print(f"  sources:         {sources}")
     print(f"  samplerate:      {samplerate}")
     print(f"  segment:         {segment}")
-    print(f"  segment_samples: {segment_samples}")
+    print(f"  segment_samples: {segment_samples}\n")
 
-    for device in ["cpu", "cuda"]:
-        print(f"\n--- Exporting for {device.upper()} ---")
+    export_devices = []
+    if args.device in ["all", "cpu"]:
+        export_devices.append("cpu")
+        
+    if args.device in ["all", "cuda"]:
+        if torch.cuda.is_available():
+            export_devices.append("cuda")
+        elif args.device == "cuda":
+            print("ERROR: --device cuda requested but no CUDA GPU was detected.", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print("CUDA not detected. Skipping GPU model export.")
+
+    for device in export_devices:
+        print(f"--- Exporting for {device.upper()} ---")
         
         suffix = "_cuda" if device == "cuda" else ""
         out_path = out_dir / f"{MODEL_NAME}{suffix}.pt"
@@ -205,7 +230,7 @@ def main() -> int:
         )
         
         atomic_write_json(manifest_path, asdict(manifest))
-        print(f"Saved manifest:    {manifest_path}")
+        print(f"Saved manifest:    {manifest_path}\n")
 
     return 0
 

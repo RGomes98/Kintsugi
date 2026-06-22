@@ -14,7 +14,7 @@
   "num_models": 1,
   "torch_version": "2.1.0+cu121",
   "demucs_version": "4.0.1",
-  "python_version": "3.11.0",
+  "python_version": "3.11.0rc1",
   "traced_device": "cuda",
   "dtype": "float32"
 }
