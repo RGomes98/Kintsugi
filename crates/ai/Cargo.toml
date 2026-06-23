@@ -9,3 +9,4 @@ tch.workspace = true
 anyhow.workspace = true
 
 core = { path = "../core" }
+dsp = { path = "../dsp" }

@@ -2,8 +2,6 @@ pub(crate) const MODEL_FILENAME_CUDA: &str = "htdemucs_cuda.pt";
 pub(crate) const MODEL_FILENAME_CPU: &str = "htdemucs.pt";
 pub(crate) const MODEL_SAMPLE_RATE: u32 = 44_100;
 pub(crate) const TARGET_FRAMES: usize = 343_980;
-pub(crate) const N_CHANNELS: usize = 2;
-pub(crate) const N_STEMS: usize = 4;
 
 #[derive(Clone, Debug)]
 pub enum DeviceChoice {

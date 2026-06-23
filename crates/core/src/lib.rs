@@ -1,3 +1,6 @@
+pub const N_CHANNELS: usize = 2;
+pub const N_STEMS: usize = 4;
+
 #[derive(Clone, Debug)]
 pub struct AudioBuffer {
     pub samples: Vec<f32>,
