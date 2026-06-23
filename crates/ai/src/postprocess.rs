@@ -1,7 +1,8 @@
 use anyhow::Result;
 use tch::{Device, Kind, Tensor};
 
-use crate::config::{N_CHANNELS, N_STEMS, TARGET_FRAMES};
+use crate::config::TARGET_FRAMES;
+use core::{N_CHANNELS, N_STEMS};
 
 pub(crate) fn overlap_add_output(
     output: &Tensor,

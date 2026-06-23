@@ -1,6 +1,6 @@
 use tch::{Kind, Tensor};
 
-use crate::config::N_CHANNELS;
+use core::N_CHANNELS;
 
 pub(crate) fn make_input_chunk(
     normalized: &[f32],

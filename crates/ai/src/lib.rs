@@ -1,6 +1,7 @@
 mod config;
 mod model;
 mod postprocess;
+mod preprocess;
 
 use std::{io::Write, path::Path};
 
@@ -8,14 +9,14 @@ use anyhow::{Result, bail};
 use tch::Device;
 
 use crate::config::{MODEL_SAMPLE_RATE, TARGET_FRAMES};
-use crate::core::{AudioBuffer, N_CHANNELS, N_STEMS, Stems};
-use crate::dsp::{
-    build_demucs_weight_window, compute_global_norm, compute_shift_frames, finalize_stems,
-    normalize_interleaved,
-};
 use crate::model::{forward_chunk, load_model, resolve_device_context, validate_output_shape};
 use crate::postprocess::overlap_add_output;
 use crate::preprocess::make_input_chunk;
+use core::{AudioBuffer, N_CHANNELS, N_STEMS, Stems};
+use dsp::{
+    build_demucs_weight_window, compute_global_norm, compute_shift_frames, finalize_stems,
+    normalize_interleaved,
+};
 
 pub use config::{DeviceChoice, ExtractOptions};
 
