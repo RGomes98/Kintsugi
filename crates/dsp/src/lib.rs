@@ -1,3 +1,9 @@
+pub mod loudness;
+
+/// Synthetic signals shared by the unit tests here and in dependent crates.
+#[cfg(any(test, feature = "testutil"))]
+pub mod testutil;
+
 use anyhow::{Result, bail};
 
 use core::{AudioBuffer, N_CHANNELS, N_STEMS};
