@@ -1,3 +1,4 @@
+pub mod eq;
 pub mod loudness;
 
 /// Synthetic signals shared by the unit tests here and in dependent crates.
