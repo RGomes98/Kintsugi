@@ -15,6 +15,8 @@ pub struct MasterReport {
     /// Final correction that brought the true peak back under the ceiling.
     pub true_peak_trim_db: f32,
     pub compressor: Option<CompressorStats>,
+    /// Offset applied around the compressor to bring the program to the reference level.
+    pub compressor_leveling_db: f32,
     pub limiter: Option<LimiterStats>,
     pub iterations: usize,
     /// True when no loudness target was set, or the result landed within tolerance.
@@ -55,8 +57,10 @@ impl fmt::Display for MasterReport {
         if let Some(stats) = &self.compressor {
             write!(
                 f,
-                "\nCompressor     : gain reduction max {:.1} dB, mean {:.1} dB",
-                stats.max_gain_reduction_db, stats.mean_gain_reduction_db
+                "\nCompressor     : gain reduction max {:.1} dB, mean {:.1} dB (input leveled {:+.1} dB)",
+                stats.max_gain_reduction_db,
+                stats.mean_gain_reduction_db,
+                self.compressor_leveling_db
             )?;
         }
 
@@ -104,6 +108,7 @@ mod tests {
             loudness_gain_db: 6.0,
             true_peak_trim_db: 0.0,
             compressor: None,
+            compressor_leveling_db: 0.0,
             limiter: None,
             iterations: 1,
             converged: true,
@@ -127,6 +132,7 @@ mod tests {
             loudness_gain_db: 0.0,
             true_peak_trim_db: 0.0,
             compressor: None,
+            compressor_leveling_db: 0.0,
             limiter: None,
             iterations: 0,
             converged: true,

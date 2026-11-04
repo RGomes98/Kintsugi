@@ -6,11 +6,16 @@ use core::AudioBuffer;
 use dsp::dynamics::{CompressorStats, apply_compressor};
 use dsp::eq::{EqBand, apply_eq};
 use dsp::limiter::{LimiterStats, apply_limiter};
-use dsp::loudness::{LoudnessStats, MIN_MEASURABLE_SECONDS, apply_gain_db, measure_loudness};
+use dsp::loudness::{
+    LoudnessStats, MIN_MEASURABLE_SECONDS, apply_gain_db, measure_integrated_lufs, measure_loudness,
+};
+
+/// Program loudness the compressor thresholds are written for.
+pub const COMPRESSOR_REFERENCE_LUFS: f64 = -18.0;
 
 const MAX_LOUDNESS_ITERATIONS: usize = 4;
-/// The trim aims this far under the ceiling so float rounding cannot land above it.
-const TRUE_PEAK_MARGIN_DB: f64 = 0.005;
+/// The trim aims this far under the ceiling to cover meter under-read and float rounding.
+const TRUE_PEAK_MARGIN_DB: f64 = dsp::loudness::TRUE_PEAK_MAX_UNDER_READ_DB + 0.02;
 
 #[derive(Debug)]
 pub struct MasterOutcome {
@@ -57,8 +62,17 @@ pub fn master_audio(input: &AudioBuffer, config: &MasterConfig) -> Result<Master
         apply_eq(&mut work, &bands)?;
     }
 
+    let mut compressor_leveling_db: f32 = 0.0;
     let compressor: Option<CompressorStats> = if config.compressor.enabled {
-        Some(apply_compressor(&mut work, &config.compressor.params)?)
+        let program_lufs: f64 = measure_integrated_lufs(&work)?;
+        if program_lufs.is_finite() {
+            compressor_leveling_db = (COMPRESSOR_REFERENCE_LUFS - program_lufs) as f32;
+        }
+
+        apply_gain_db(&mut work.samples, compressor_leveling_db);
+        let stats: CompressorStats = apply_compressor(&mut work, &config.compressor.params)?;
+        apply_gain_db(&mut work.samples, -compressor_leveling_db);
+        Some(stats)
     } else {
         None
     };
@@ -102,6 +116,7 @@ pub fn master_audio(input: &AudioBuffer, config: &MasterConfig) -> Result<Master
             loudness_gain_db: level.gain_db,
             true_peak_trim_db: trim_db,
             compressor,
+            compressor_leveling_db,
             limiter,
             iterations: level.iterations,
             converged: level.converged,
@@ -127,10 +142,13 @@ fn render(pre: &AudioBuffer, gain_db: f32, config: &MasterConfig) -> Result<Rend
     if config.limiter.enabled {
         let ceiling: f64 = config.limiter.params.ceiling_db as f64;
 
-        if stats.true_peak_dbtp > ceiling {
+        if stats.true_peak_dbtp > ceiling - TRUE_PEAK_MARGIN_DB {
             trim_db = (ceiling - TRUE_PEAK_MARGIN_DB - stats.true_peak_dbtp) as f32;
             apply_gain_db(&mut audio.samples, trim_db);
-            stats = measure_loudness(&audio)?;
+            // A plain gain shifts loudness and peaks by `trim_db`; no need to re-measure.
+            stats.integrated_lufs += trim_db as f64;
+            stats.true_peak_dbtp += trim_db as f64;
+            stats.sample_peak_db += trim_db as f64;
         }
     }
 
@@ -151,12 +169,12 @@ fn normalize_loudness(
     let tolerance: f64 = config.loudness.tolerance_lu as f64;
     let max_gain: f32 = config.loudness.max_gain_db;
 
-    let pre_stats: LoudnessStats = measure_loudness(pre)?;
-    if pre_stats.is_silent() {
+    let pre_lufs: f64 = measure_integrated_lufs(pre)?;
+    if !pre_lufs.is_finite() {
         bail!("The signal is silent after EQ and compression; cannot normalize loudness");
     }
 
-    let wanted_gain: f32 = (target - pre_stats.integrated_lufs) as f32;
+    let wanted_gain: f32 = (target - pre_lufs) as f32;
     let mut gain_db: f32 = wanted_gain.clamp(-max_gain, max_gain);
     if gain_db != wanted_gain {
         warnings.push(format!(
@@ -375,6 +393,91 @@ mod tests {
             assert!(report.compressor.is_some(), "{name}");
             assert_ne!(outcome.audio.samples, neutral_out.audio.samples, "{name}");
         }
+    }
+
+    #[test]
+    fn compression_does_not_depend_on_how_hot_the_input_is() {
+        let mut config: MasterConfig = load_config(Some("gentle"), None).unwrap();
+        // Test noise has a low crest factor; a lower threshold makes the compressor work.
+        config.compressor.params.threshold_db = -26.0;
+        let hot: AudioBuffer = modulated_noise_stereo(-2.0, 8.0, SR, 12);
+        let mut quiet: AudioBuffer = hot.clone();
+        apply_gain_db(&mut quiet.samples, -20.0);
+
+        let hot_out: MasterOutcome = master_audio(&hot, &config).unwrap();
+        let quiet_out: MasterOutcome = master_audio(&quiet, &config).unwrap();
+        let hot_gr: f32 = hot_out.report.compressor.unwrap().mean_gain_reduction_db;
+        let quiet_gr: f32 = quiet_out.report.compressor.unwrap().mean_gain_reduction_db;
+
+        assert!(hot_gr > 0.5, "{}", hot_out.report);
+        assert!(
+            (hot_gr - quiet_gr).abs() < 0.01,
+            "hot {hot_gr} dB vs quiet {quiet_gr} dB"
+        );
+        assert!(
+            (hot_out.report.compressor_leveling_db - quiet_out.report.compressor_leveling_db
+                + 20.0)
+                .abs()
+                < 0.01
+        );
+    }
+
+    #[test]
+    fn leveling_equals_shifting_the_threshold_and_keeps_the_level() {
+        // Leveling must equal shifting the threshold by the program's offset.
+        let input: AudioBuffer = modulated_noise_stereo(-3.0, 6.0, SR, 13);
+        let mut config: MasterConfig = load_config(Some("gentle"), None).unwrap();
+        config.eq.enabled = false;
+        config.loudness.enabled = false;
+        config.limiter.enabled = false;
+
+        let outcome: MasterOutcome = master_audio(&input, &config).unwrap();
+
+        let program_lufs: f64 = measure_integrated_lufs(&input).unwrap();
+        let mut params: dsp::dynamics::CompressorParams = config.compressor.params;
+        params.threshold_db += (program_lufs - COMPRESSOR_REFERENCE_LUFS) as f32;
+        let mut expected: AudioBuffer = input.clone();
+        apply_compressor(&mut expected, &params).unwrap();
+
+        let max_diff: f32 = outcome
+            .audio
+            .samples
+            .iter()
+            .zip(&expected.samples)
+            .fold(0.0f32, |acc: f32, (a, b): (&f32, &f32)| {
+                acc.max((a - b).abs())
+            });
+        assert!(max_diff < 1e-4, "max difference {max_diff}");
+    }
+
+    #[test]
+    fn reported_output_stats_match_a_fresh_measurement() {
+        // Samples of a quarter-rate sine at 45 degrees sit 3 dB under its crest, so only
+        // the true-peak trim acts on it.
+        let frames: usize = SR as usize * 3;
+        let samples: Vec<f32> = (0..frames)
+            .flat_map(|i: usize| {
+                let v: f32 =
+                    (std::f32::consts::FRAC_PI_2 * i as f32 + std::f32::consts::FRAC_PI_4).sin();
+                [v, v]
+            })
+            .collect();
+        let input: AudioBuffer = AudioBuffer {
+            samples,
+            sample_rate: SR,
+            channels: 2,
+        };
+        let mut config: MasterConfig = neutral();
+        config.loudness.enabled = false;
+        let outcome: MasterOutcome = master_audio(&input, &config).unwrap();
+        let fresh: LoudnessStats = measure_loudness(&outcome.audio).unwrap();
+        let report: &MasterReport = &outcome.report;
+
+        assert!(report.true_peak_trim_db < 0.0, "{report}");
+        assert!((report.after.integrated_lufs - fresh.integrated_lufs).abs() < 0.001);
+        assert!((report.after.true_peak_dbtp - fresh.true_peak_dbtp).abs() < 0.001);
+        assert!((report.after.sample_peak_db - fresh.sample_peak_db).abs() < 0.001);
+        assert!(fresh.true_peak_dbtp <= -1.0, "{}", fresh.true_peak_dbtp);
     }
 
     #[test]
