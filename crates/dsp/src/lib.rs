@@ -1,3 +1,4 @@
+pub mod dynamics;
 pub mod eq;
 pub mod loudness;
 
