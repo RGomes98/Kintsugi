@@ -1,5 +1,6 @@
 pub mod dynamics;
 pub mod eq;
+pub mod limiter;
 pub mod loudness;
 
 /// Synthetic signals shared by the unit tests here and in dependent crates.
