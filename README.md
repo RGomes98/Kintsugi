@@ -57,7 +57,9 @@ The result is written to `./output/<name>_mastered.wav`, and a before/after repo
 
 ## Mastering
 
-`master` runs a fixed chain on the stereo mix: **EQ → compressor → loudness gain → limiter**. After the limiter it measures the real output and corrects the gain until the integrated loudness is within tolerance (default ±0.2 LU), then guarantees the true peak stays under the limiter ceiling (default −1.0 dBTP). If a target cannot be reached, for instance because the limiter or `max_gain_db` is in the way, the report says so instead of pretending.
+`master` runs a fixed chain on the stereo mix: **EQ → compressor → loudness gain → limiter**. After the limiter it measures the real output and corrects the gain until the integrated loudness is within tolerance (default ±0.2 LU), then guarantees the true peak stays under the limiter ceiling (default −1.0 dBTP). True peak is measured at 16x oversampling, finer than the 4x minimum of ITU-R BS.1770. If a target cannot be reached, for instance because the limiter or `max_gain_db` is in the way, the report says so instead of pretending.
+
+Compressor thresholds assume a program at −18 LUFS: the mix is leveled to −18 LUFS before compressing and restored afterwards, so a preset compresses quiet and hot sources alike.
 
 ### Presets
 
@@ -92,7 +94,7 @@ gain_db = -2.0
 q = 1.0
 
 [compressor]
-threshold_db = -20.0
+threshold_db = -20.0      # for a mix leveled to -18 LUFS
 ratio = 2.5
 attack_ms = 20.0
 release_ms = 150.0
@@ -108,7 +110,7 @@ release_ms = 100.0
 ### Current limitations
 
 - Stereo input only; WAV output is 32-bit float.
-- The limiter works on sample peaks and a final trim enforces the true-peak ceiling, so on masters with heavy inter-sample peaks the trim can be around a dB.
+- The limiter works on sample peaks and a final trim enforces the true-peak ceiling, so on masters with heavy inter-sample peaks the trim can be a dB or more, which can keep `loud` short of its target on older material.
 
 ## Development
 
