@@ -6,6 +6,13 @@ use core::{AudioBuffer, N_CHANNELS};
 /// EBU R128 gates in 400 ms blocks, so anything shorter has no integrated loudness.
 pub const MIN_MEASURABLE_SECONDS: f32 = 0.4;
 
+/// BS.1770's 4x minimum can miss inter-sample peaks by about 0.1 dB.
+pub const TRUE_PEAK_OVERSAMPLING: usize = 16;
+/// Worst under-read of the true-peak meter, reached on content above 20 kHz.
+pub const TRUE_PEAK_MAX_UNDER_READ_DB: f64 = 0.03;
+const TRUE_PEAK_TAPS_PER_PHASE: usize = 48;
+const TRUE_PEAK_KAISER_BETA: f64 = 8.0;
+
 #[derive(Clone, Copy, Debug)]
 pub struct LoudnessStats {
     pub integrated_lufs: f64,
@@ -66,12 +73,9 @@ pub fn measure_loudness(audio: &AudioBuffer) -> Result<LoudnessStats> {
         bail!("Stereo interleaved buffer must have an even number of samples");
     }
 
-    let mut meter: EbuR128 = EbuR128::new(
-        N_CHANNELS as u32,
-        audio.sample_rate,
-        Mode::I | Mode::LRA | Mode::TRUE_PEAK,
-    )
-    .context("Failed to initialize loudness meter")?;
+    let mut meter: EbuR128 =
+        EbuR128::new(N_CHANNELS as u32, audio.sample_rate, Mode::I | Mode::LRA)
+            .context("Failed to initialize loudness meter")?;
 
     meter
         .add_frames_f32(&audio.samples)
@@ -84,27 +88,160 @@ pub fn measure_loudness(audio: &AudioBuffer) -> Result<LoudnessStats> {
         .loudness_range()
         .context("Failed to read loudness range")?;
 
-    let mut true_peak: f64 = 0.0;
-    let mut sample_peak: f64 = 0.0;
-    for channel in 0..N_CHANNELS as u32 {
-        true_peak = true_peak.max(
-            meter
-                .true_peak(channel)
-                .context("Failed to read true peak")?,
-        );
-        sample_peak = sample_peak.max(
-            meter
-                .sample_peak(channel)
-                .context("Failed to read sample peak")?,
-        );
-    }
+    let sample_peak: f32 = audio
+        .samples
+        .iter()
+        .fold(0.0f32, |acc: f32, &x: &f32| acc.max(x.abs()));
+    // Interpolated points never land on input samples, so a peak on a sample can read low.
+    let true_peak: f32 = true_peak_linear(audio).max(sample_peak);
 
     Ok(LoudnessStats {
         integrated_lufs,
         loudness_range_lu,
-        true_peak_dbtp: peak_to_db(true_peak),
-        sample_peak_db: peak_to_db(sample_peak),
+        true_peak_dbtp: peak_to_db(true_peak as f64),
+        sample_peak_db: peak_to_db(sample_peak as f64),
     })
+}
+
+/// Integrated loudness only, for callers that do not need peaks or loudness range.
+pub fn measure_integrated_lufs(audio: &AudioBuffer) -> Result<f64> {
+    if audio.channels as usize != N_CHANNELS {
+        bail!(
+            "Loudness measurement expects stereo audio, got {} channel(s)",
+            audio.channels
+        );
+    }
+
+    let mut meter: EbuR128 = EbuR128::new(N_CHANNELS as u32, audio.sample_rate, Mode::I)
+        .context("Failed to initialize loudness meter")?;
+    meter
+        .add_frames_f32(&audio.samples)
+        .context("Failed to feed audio to loudness meter")?;
+
+    meter
+        .loudness_global()
+        .context("Failed to read integrated loudness")
+}
+
+/// Highest absolute value of the signal reconstructed at `TRUE_PEAK_OVERSAMPLING`x.
+fn true_peak_linear(audio: &AudioBuffer) -> f32 {
+    let phases: Vec<[f32; TRUE_PEAK_TAPS_PER_PHASE]> = true_peak_phases();
+    let frames: usize = audio.samples.len() / N_CHANNELS;
+    let threads: usize = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut peak: f32 = 0.0;
+
+    for channel in 0..N_CHANNELS {
+        // Zero padding lets the filter ring out past both ends.
+        let mut padded: Vec<f32> = vec![0.0; frames + 2 * TRUE_PEAK_TAPS_PER_PHASE];
+        for (slot, frame) in padded[TRUE_PEAK_TAPS_PER_PHASE..]
+            .iter_mut()
+            .zip(audio.samples.as_chunks::<N_CHANNELS>().0)
+        {
+            *slot = frame[channel];
+        }
+
+        // Parts overlap by one window so none is skipped.
+        let windows: usize = padded.len() - TRUE_PEAK_TAPS_PER_PHASE + 1;
+        let per_part: usize = windows.div_ceil(threads);
+        let channel_peak: f32 = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..windows)
+                .step_by(per_part)
+                .map(|start: usize| {
+                    let end: usize = (start + per_part).min(windows) + TRUE_PEAK_TAPS_PER_PHASE - 1;
+                    let part: &[f32] = &padded[start..end];
+                    let phases: &[[f32; TRUE_PEAK_TAPS_PER_PHASE]] = &phases;
+                    scope.spawn(move || interpolated_peak(part, phases))
+                })
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("true-peak worker panicked"))
+                .fold(0.0f32, f32::max)
+        });
+        peak = peak.max(channel_peak);
+    }
+
+    peak
+}
+
+fn interpolated_peak(samples: &[f32], phases: &[[f32; TRUE_PEAK_TAPS_PER_PHASE]]) -> f32 {
+    let mut peak: f32 = 0.0;
+
+    for window in samples.windows(TRUE_PEAK_TAPS_PER_PHASE) {
+        for taps in phases {
+            // Separate accumulators let the compiler vectorize.
+            let mut acc: [f32; 8] = [0.0; 8];
+            for (xs, hs) in window
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .zip(taps.as_chunks::<8>().0)
+            {
+                for lane in 0..8 {
+                    acc[lane] += xs[lane] * hs[lane];
+                }
+            }
+            peak = peak.max(acc.iter().sum::<f32>().abs());
+        }
+    }
+
+    peak
+}
+
+/// Polyphase taps of a Kaiser-windowed sinc, reversed and normalized to unit DC gain.
+fn true_peak_phases() -> Vec<[f32; TRUE_PEAK_TAPS_PER_PHASE]> {
+    let factor: usize = TRUE_PEAK_OVERSAMPLING;
+    let len: usize = factor * TRUE_PEAK_TAPS_PER_PHASE;
+    let center: f64 = (len - 1) as f64 / 2.0;
+    let window_norm: f64 = bessel_i0(TRUE_PEAK_KAISER_BETA);
+
+    let prototype: Vec<f64> = (0..len)
+        .map(|n: usize| {
+            let t: f64 = (n as f64 - center) / factor as f64;
+            let sinc: f64 = if t == 0.0 {
+                1.0
+            } else {
+                (std::f64::consts::PI * t).sin() / (std::f64::consts::PI * t)
+            };
+            let r: f64 = (n as f64 - center) / center;
+            let window: f64 =
+                bessel_i0(TRUE_PEAK_KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / window_norm;
+            sinc * window
+        })
+        .collect();
+
+    (0..factor)
+        .map(|phase: usize| {
+            let taps: Vec<f64> = (0..TRUE_PEAK_TAPS_PER_PHASE)
+                .map(|k: usize| prototype[k * factor + phase])
+                .collect();
+            let sum: f64 = taps.iter().sum();
+
+            let mut reversed: [f32; TRUE_PEAK_TAPS_PER_PHASE] = [0.0; TRUE_PEAK_TAPS_PER_PHASE];
+            for (slot, tap) in reversed.iter_mut().zip(taps.iter().rev()) {
+                *slot = (tap / sum) as f32;
+            }
+            reversed
+        })
+        .collect()
+}
+
+/// Zeroth-order modified Bessel function of the first kind, for the Kaiser window.
+fn bessel_i0(x: f64) -> f64 {
+    let half: f64 = x / 2.0;
+    let mut term: f64 = 1.0;
+    let mut sum: f64 = 1.0;
+
+    for k in 1..64 {
+        term *= (half / k as f64).powi(2);
+        sum += term;
+        if term < sum * 1e-17 {
+            break;
+        }
+    }
+
+    sum
 }
 
 fn peak_to_db(peak: f64) -> f64 {
@@ -161,6 +298,90 @@ mod tests {
         let audio: AudioBuffer = noise_stereo(-3.0, 5.0, SR, 99);
         let stats: LoudnessStats = measure_loudness(&audio).unwrap();
         assert!(stats.true_peak_dbtp >= stats.sample_peak_db - 1e-6);
+    }
+
+    /// Stereo sine with 10 ms fades, so the buffer edges add no ringing.
+    fn faded_sine(freq_hz: f64, peak_dbfs: f32, phase: f64, sample_rate: u32) -> AudioBuffer {
+        let frames: usize = sample_rate as usize / 2;
+        let fade: usize = sample_rate as usize / 100;
+        let amp: f64 = 10f64.powf(peak_dbfs as f64 / 20.0);
+        let mut samples: Vec<f32> = Vec::with_capacity(frames * 2);
+
+        for i in 0..frames {
+            let edge: usize = i.min(frames - 1 - i);
+            let gain: f64 = if edge < fade {
+                (std::f64::consts::FRAC_PI_2 * edge as f64 / fade as f64)
+                    .sin()
+                    .powi(2)
+            } else {
+                1.0
+            };
+            let t: f64 = i as f64 / sample_rate as f64;
+            let v: f32 =
+                (gain * amp * (2.0 * std::f64::consts::PI * freq_hz * t + phase).sin()) as f32;
+            samples.push(v);
+            samples.push(v);
+        }
+
+        AudioBuffer {
+            samples,
+            sample_rate,
+            channels: 2,
+        }
+    }
+
+    #[test]
+    fn true_peak_finds_the_peak_between_samples() {
+        // Every sample of a quarter-rate sine at 45 degrees sits 3 dB under its crest.
+        let audio: AudioBuffer = faded_sine(SR as f64 / 4.0, -6.0, std::f64::consts::FRAC_PI_4, SR);
+        let stats: LoudnessStats = measure_loudness(&audio).unwrap();
+
+        assert!(
+            (stats.sample_peak_db - -9.01).abs() < 0.05,
+            "{}",
+            stats.sample_peak_db
+        );
+        assert!(
+            (stats.true_peak_dbtp - -6.0).abs() < 0.02,
+            "{}",
+            stats.true_peak_dbtp
+        );
+    }
+
+    #[test]
+    fn true_peak_is_accurate_near_the_top_of_the_band() {
+        for phase in [0.0, 0.3, 0.9, 1.7, 2.6] {
+            let audio: AudioBuffer = faded_sine(19_000.0, -3.0, phase, 44_100);
+            let true_peak: f64 = measure_loudness(&audio).unwrap().true_peak_dbtp;
+            assert!(
+                (true_peak - -3.0).abs() < 0.02,
+                "phase {phase}: {true_peak} dBTP"
+            );
+        }
+    }
+
+    #[test]
+    fn under_read_above_20_khz_stays_within_the_documented_bound() {
+        // 21 kHz at 44.1 kHz falls in the interpolator's transition band.
+        let mut worst: f64 = 0.0;
+        for step in 0..32 {
+            let phase: f64 = std::f64::consts::PI * step as f64 / 32.0;
+            let audio: AudioBuffer = faded_sine(21_000.0, -3.0, phase, 44_100);
+            let true_peak: f64 = measure_loudness(&audio).unwrap().true_peak_dbtp;
+            worst = worst.min(true_peak - -3.0);
+        }
+        assert!(
+            -worst <= TRUE_PEAK_MAX_UNDER_READ_DB,
+            "worst under-read {worst} dB"
+        );
+    }
+
+    #[test]
+    fn integrated_only_measurement_matches_the_full_one() {
+        let audio: AudioBuffer = noise_stereo(-12.0, 5.0, SR, 3);
+        let full: f64 = measure_loudness(&audio).unwrap().integrated_lufs;
+        let quick: f64 = measure_integrated_lufs(&audio).unwrap();
+        assert!((full - quick).abs() < 1e-9, "{full} vs {quick}");
     }
 
     #[test]
