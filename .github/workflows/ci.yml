@@ -56,3 +56,51 @@ jobs:
 
       - name: Run Tests
         run: cargo test --workspace --exclude ai --exclude cli --locked
+
+  libtorch:
+    name: Lint & Test (LibTorch)
+    runs-on: ubuntu-latest
+    needs: check-format
+    timeout-minutes: 30
+
+    env:
+      # `tch` 0.14 links LibTorch 2.1.0 exactly; bump both together.
+      LIBTORCH_VERSION: "2.1.0"
+      LIBTORCH_SHA256: 04f699d5181048b0062ef52de1df44b46859b8fbeeee12abdbcb9aac63e2a14b
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Cache LibTorch
+        id: libtorch-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/libtorch.zip
+          key: libtorch-cpu-${{ env.LIBTORCH_VERSION }}-${{ env.LIBTORCH_SHA256 }}
+
+      - name: Download LibTorch
+        if: steps.libtorch-cache.outputs.cache-hit != 'true'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/libtorch.zip" \
+            "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip"
+
+      # The archive is checked on every run, so a corrupted download never reaches the cache.
+      - name: Install LibTorch
+        run: |
+          echo "$LIBTORCH_SHA256  $RUNNER_TEMP/libtorch.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/libtorch.zip" -d "$RUNNER_TEMP"
+          echo "LIBTORCH=$RUNNER_TEMP/libtorch" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/libtorch/lib" >> "$GITHUB_ENV"
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy -p ai -p cli --all-targets --locked -- -D warnings
+
+      - name: Run Tests
+        run: cargo test -p ai -p cli --locked
