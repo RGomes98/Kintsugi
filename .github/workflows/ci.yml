@@ -104,3 +104,19 @@ jobs:
 
       - name: Run Tests
         run: cargo test -p ai -p cli --locked
+
+  dependencies:
+    name: Audit Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      # Fails on known vulnerabilities, unsound or unmaintained crates and yanked versions in Cargo.lock.
+      # Accepted exceptions live in deny.toml, each with a reason.
+      - name: Audit Dependencies
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
