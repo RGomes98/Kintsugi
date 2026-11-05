@@ -1,0 +1,13 @@
+# Loudness normalization and true-peak limiting only. No tonal or dynamic changes.
+
+[loudness]
+target_lufs = -14.0
+
+[eq]
+enabled = false
+
+[compressor]
+enabled = false
+
+[limiter]
+ceiling_db = -1.0

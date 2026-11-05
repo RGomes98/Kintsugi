@@ -1,0 +1,47 @@
+# Modern, competitive level: tighter low end, a scooped low-mid, brighter top, firmer
+# compression and a hotter loudness target. Starting point, tune by ear.
+
+[loudness]
+target_lufs = -10.0
+# Old or quiet sources need more than the default 12 dB to get this loud.
+max_gain_db = 18.0
+
+[eq]
+enabled = true
+
+[[eq.band]]
+kind = "highpass"
+freq_hz = 30.0
+q = 0.707
+
+[[eq.band]]
+kind = "lowshelf"
+freq_hz = 90.0
+gain_db = 1.5
+q = 0.707
+
+[[eq.band]]
+kind = "peak"
+freq_hz = 350.0
+gain_db = -2.0
+q = 1.0
+
+[[eq.band]]
+kind = "highshelf"
+freq_hz = 9000.0
+gain_db = 1.5
+q = 0.707
+
+[compressor]
+enabled = true
+threshold_db = -22.0
+ratio = 3.0
+attack_ms = 15.0
+release_ms = 120.0
+knee_db = 6.0
+mix = 1.0
+
+[limiter]
+ceiling_db = -1.0
+lookahead_ms = 5.0
+release_ms = 80.0

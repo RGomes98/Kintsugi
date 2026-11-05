@@ -1,0 +1,43 @@
+# For dull or aged recordings: restores top end and presence, keeps dynamics by using
+# parallel compression and a conservative loudness target. Starting point, tune by ear.
+
+[loudness]
+target_lufs = -16.0
+
+[eq]
+enabled = true
+
+[[eq.band]]
+kind = "highpass"
+freq_hz = 35.0
+q = 0.707
+
+[[eq.band]]
+kind = "lowshelf"
+freq_hz = 120.0
+gain_db = 1.0
+q = 0.707
+
+[[eq.band]]
+kind = "peak"
+freq_hz = 3000.0
+gain_db = 1.0
+q = 0.8
+
+[[eq.band]]
+kind = "highshelf"
+freq_hz = 8000.0
+gain_db = 3.5
+q = 0.6
+
+[compressor]
+enabled = true
+threshold_db = -20.0
+ratio = 2.0
+attack_ms = 40.0
+release_ms = 300.0
+knee_db = 8.0
+mix = 0.8
+
+[limiter]
+ceiling_db = -1.0
