@@ -6,8 +6,12 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+clap.workspace = true
 
 ai = { path = "../ai" }
-core = { path = "../core" }
+# Renamed: a dependency literally named `core` shadows std's `core`, which breaks
+# the paths that clap's derive macros generate (`::core::env!`).
+kintsugi_core = { package = "core", path = "../core" }
 dsp = { path = "../dsp" }
 io = { path = "../io" }
+master = { path = "../master" }

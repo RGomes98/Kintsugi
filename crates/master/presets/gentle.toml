@@ -1,0 +1,37 @@
+# Light touch: clears sub-bass rumble and a little low-mid mud, adds a hint of air,
+# and tames peaks with a low-ratio compressor. Starting point, tune by ear.
+
+[loudness]
+target_lufs = -14.0
+
+[eq]
+enabled = true
+
+[[eq.band]]
+kind = "highpass"
+freq_hz = 25.0
+q = 0.707
+
+[[eq.band]]
+kind = "peak"
+freq_hz = 300.0
+gain_db = -1.5
+q = 1.0
+
+[[eq.band]]
+kind = "highshelf"
+freq_hz = 10000.0
+gain_db = 1.0
+q = 0.707
+
+[compressor]
+enabled = true
+threshold_db = -18.0
+ratio = 1.8
+attack_ms = 30.0
+release_ms = 200.0
+knee_db = 6.0
+mix = 1.0
+
+[limiter]
+ceiling_db = -1.0
