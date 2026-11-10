@@ -1,0 +1,122 @@
+name: Kintsugi CI
+
+# Pull requests only: nothing runs on pushes to `main`.
+on:
+  pull_request:
+    branches:
+      - main
+
+# Least privilege: no job needs to write anything.
+permissions:
+  contents: read
+
+# A new push to the same pull request cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-format:
+    name: Check Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+
+      - name: Run rustfmt
+        run: cargo fmt --all -- --check
+
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    needs: check-format
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      # `ai` and `cli` link LibTorch and have their own job, so this one needs no download.
+      - name: Run Clippy
+        run: cargo clippy --workspace --exclude ai --exclude cli --all-targets --locked -- -D warnings
+
+      - name: Run Tests
+        run: cargo test --workspace --exclude ai --exclude cli --locked
+
+  libtorch:
+    name: Lint & Test (LibTorch)
+    runs-on: ubuntu-latest
+    needs: check-format
+    timeout-minutes: 30
+
+    env:
+      # `tch` 0.14 links LibTorch 2.1.0 exactly; bump both together.
+      LIBTORCH_VERSION: "2.1.0"
+      LIBTORCH_SHA256: 04f699d5181048b0062ef52de1df44b46859b8fbeeee12abdbcb9aac63e2a14b
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        run: rustup toolchain install stable --profile minimal --component clippy
+
+      - name: Cache LibTorch
+        id: libtorch-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/libtorch.zip
+          key: libtorch-cpu-${{ env.LIBTORCH_VERSION }}-${{ env.LIBTORCH_SHA256 }}
+
+      - name: Download LibTorch
+        if: steps.libtorch-cache.outputs.cache-hit != 'true'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/libtorch.zip" \
+            "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip"
+
+      # The archive is checked on every run, so a corrupted download never reaches the cache.
+      - name: Install LibTorch
+        run: |
+          echo "$LIBTORCH_SHA256  $RUNNER_TEMP/libtorch.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/libtorch.zip" -d "$RUNNER_TEMP"
+          echo "LIBTORCH=$RUNNER_TEMP/libtorch" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/libtorch/lib" >> "$GITHUB_ENV"
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy -p ai -p cli --all-targets --locked -- -D warnings
+
+      - name: Run Tests
+        run: cargo test -p ai -p cli --locked
+
+  dependencies:
+    name: Audit Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      # Fails on known vulnerabilities, unsound or unmaintained crates and yanked versions in Cargo.lock.
+      # Accepted exceptions live in deny.toml, each with a reason.
+      - name: Audit Dependencies
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
