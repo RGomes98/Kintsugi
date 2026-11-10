@@ -1,0 +1,15 @@
+# Checked on every pull request (see .github/workflows/ci.yml).
+# Every exception needs a reason and a way out.
+
+[advisories]
+ignore = [
+    # `zip` 0.6.6 and its `zstd` dependencies come from `tch` 0.14, which only uses them to read
+    # and write .npz files. Kintsugi never touches an archive with them: TorchScript models are
+    # loaded by LibTorch itself. All of this goes away when `tch` and LibTorch are upgraded.
+    { id = "RUSTSEC-2026-0367", reason = "zip extraction: Kintsugi never extracts archives" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extraction: Kintsugi never extracts archives" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extraction: Kintsugi never extracts archives" },
+    { id = "RUSTSEC-2026-0429", reason = "zip extraction: Kintsugi never extracts archives" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd legacy frames: Kintsugi never decompresses zip entries" },
+    { id = "RUSTSEC-2026-0410", reason = "zstd WebAssembly allocator shim: not built for native targets" },
+]
